@@ -268,12 +268,44 @@ fn kind_from_type(t: u8) -> DeviceKind {
     }
 }
 
+/// BH_DEBUG only: every feature the device lists (FEATURE_SET 0x0001: fn 0 = count,
+/// fn 1 = feature id at an index), so a log shows which battery features a model offers.
+fn log_features20(h: &Hidpp, idx: u8) {
+    if std::env::var_os("BH_DEBUG").is_none() {
+        return;
+    }
+    let fs = h.feature_index(idx, 0x0001);
+    let Some(count) = (fs != 0).then(|| h.call(idx, fs, 0, &[])).flatten().and_then(|p| p.first().copied()) else {
+        crate::util::debug_log(|| format!("  index {idx}: no feature set"));
+        return;
+    };
+    let mut ids = Vec::new();
+    for i in 1..=count {
+        if let Some(p) = h.call(idx, fs, 1, &[i]).filter(|p| p.len() >= 2) {
+            ids.push(format!("{i:02X}={}", hex4(((p[0] as u16) << 8) | p[1] as u16)));
+        }
+    }
+    crate::util::debug_log(|| format!("  index {idx}: features {}", ids.join(" ")));
+}
+
 /// Fills battery fields from whichever battery feature the device has. Returns false if none.
 fn read_battery20(h: &Hidpp, idx: u8, pid: u16, s: &mut DeviceStatus) -> bool {
+    log_features20(h, idx);
+    let found = read_battery20_inner(h, idx, pid, s);
+    if found && s.millivolts != 0 {
+        crate::util::debug_log(|| format!("  index {idx}: {} mV -> {}%", s.millivolts, s.percent));
+    }
+    found
+}
+
+fn read_battery20_inner(h: &Hidpp, idx: u8, pid: u16, s: &mut DeviceStatus) -> bool {
+    let raw =
+        |name: &str, f: u8, p: &[u8]| crate::util::debug_log(|| format!("  index {idx}: {name} (feature index {f:02X}) reply {:02X?}", &p[..p.len().min(6)]));
     let f = h.feature_index(idx, 0x1004); // UNIFIED_BATTERY: get_status (fn 1)
     if f != 0
         && let Some(p) = h.call(idx, f, 1, &[]).filter(|p| p.len() >= 3)
     {
+        raw("1004 unified battery", f, &p);
         let (soc, level, st) = (p[0] as i32, p[1], p[2]);
         if soc > 0 && soc <= 100 {
             s.percent = soc;
@@ -298,6 +330,7 @@ fn read_battery20(h: &Hidpp, idx: u8, pid: u16, s: &mut DeviceStatus) -> bool {
     if f != 0
         && let Some(p) = h.call(idx, f, 0, &[]).filter(|p| p.len() >= 3)
     {
+        raw("1000 battery status", f, &p);
         let st = p[2];
         s.charging = (1..=4).contains(&st);
         s.full = st == 3;
@@ -311,6 +344,7 @@ fn read_battery20(h: &Hidpp, idx: u8, pid: u16, s: &mut DeviceStatus) -> bool {
     if f != 0
         && let Some(p) = h.call(idx, f, 0, &[]).filter(|p| p.len() >= 3)
     {
+        raw("1001 battery voltage", f, &p);
         s.millivolts = ((p[0] as i32) << 8) | p[1] as i32;
         s.charging = p[2] & 0x80 != 0;
         if s.millivolts != 0 {
@@ -322,6 +356,7 @@ fn read_battery20(h: &Hidpp, idx: u8, pid: u16, s: &mut DeviceStatus) -> bool {
     if f != 0
         && let Some(p) = h.call(idx, f, 0, &[]).filter(|p| p.len() >= 3)
     {
+        raw("1F20 ADC measurement", f, &p);
         s.millivolts = ((p[0] as i32) << 8) | p[1] as i32;
         s.charging = p[2] == 0x03;
         if s.millivolts != 0 {
