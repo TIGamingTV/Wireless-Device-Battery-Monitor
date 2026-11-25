@@ -1,0 +1,48 @@
+# Builds the setup on every push to main (or by hand from the Actions tab) and publishes it as a
+# GitHub pre-release of this fork, so a test build can be downloaded without building it locally.
+name: Test release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            installer
+
+      - name: Build the program and the setup
+        shell: pwsh
+        run: |
+          cargo build --release --bins
+          if ($LASTEXITCODE) { throw 'cargo build failed' }
+          $env:BH_PAYLOAD_DIR = Join-Path $PWD 'target\release'
+          cargo build --release --manifest-path installer/Cargo.toml
+          if ($LASTEXITCODE) { throw 'setup build failed' }
+
+      - name: Publish the pre-release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $short = '${{ github.sha }}'.Substring(0, 7)
+          $tag = "v$version-test-$short"
+          $exe = "BatteryHub-Taskbar-Setup-$tag.exe"
+          Copy-Item installer/target/release/BatteryHub-Taskbar-Setup.exe $exe
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  $exe" | Set-Content SHA256SUMS.txt -Encoding ascii
+          gh release create $tag $exe SHA256SUMS.txt --prerelease --target '${{ github.sha }}' --title "Test build $tag" --notes "Test build of ${{ github.sha }} (not signed). Debug log: start BatteryHub with the environment variable BH_DEBUG=1; it writes to %TEMP%\bh2.log."
