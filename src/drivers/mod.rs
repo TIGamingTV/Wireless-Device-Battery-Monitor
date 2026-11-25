@@ -69,6 +69,7 @@ pub mod rawm;
 pub mod razer;
 pub mod razer_nari;
 pub mod roccat;
+pub mod rog_omni;
 pub mod rog_pelta;
 pub mod rongyuan;
 pub mod sdi;

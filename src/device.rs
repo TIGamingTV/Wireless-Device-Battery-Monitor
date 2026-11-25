@@ -401,6 +401,7 @@ pub fn poll_hardware(ids: &[(u16, u16)]) -> Vec<DeviceStatus> {
     drivers::audeze::poll(&mut ctx);
     drivers::incott::poll(&mut ctx);
     drivers::asus_mouse::poll(&mut ctx);
+    drivers::rog_omni::poll(&mut ctx);
     drivers::machenike::poll(&mut ctx);
     drivers::playstation::poll(&mut ctx);
     drivers::generic::poll(&mut ctx);
@@ -568,6 +569,7 @@ fn poll_with(colls: Vec<HidColl>) -> Vec<DeviceStatus> {
     drivers::audeze::poll(&mut ctx);
     drivers::incott::poll(&mut ctx);
     drivers::asus_mouse::poll(&mut ctx);
+    drivers::rog_omni::poll(&mut ctx);
     drivers::machenike::poll(&mut ctx);
     drivers::playstation::poll(&mut ctx);
     drivers::airpods::poll(&mut ctx);
