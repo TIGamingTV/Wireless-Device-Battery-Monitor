@@ -49,6 +49,9 @@ fn mouse_name(pid: u16) -> Option<&'static str> {
 fn keyboard_name(pid: u16) -> Option<&'static str> {
     Some(match pid {
         0x1A85 => "ROG Azoth",
+        // Not in G-Helper's OMNI table: seen in this receiver's pair list next to a ROG Azoth X
+        // (issue #428); it is the Azoth X's own dongle id there (AzothXWireless), read like the Azoth.
+        0x1C25 => "ROG Azoth X",
         0x1B42 => "ROG Azoth Extreme",
         0x1CF1 => "ROG Azoth Extreme SE",
         0x1AB0 => "ROG Strix Scope II 96 Wireless",
@@ -211,7 +214,9 @@ pub fn poll(ctx: &mut PollContext) {
                 grace_sec: 300,
                 ..Default::default()
             };
-            found.push(status(base, ask(c, &mouse_request(), decode_mouse)));
+            let a = ask(c, &mouse_request(), decode_mouse);
+            crate::util::debug_log(|| format!("ROG OMNI receiver: mouse {pid:04X} answered {a:?}"));
+            found.push(status(base, a));
         }
         if let (Some(&pid), Some(c)) = (pids.iter().find(|&&p| keyboard_name(p).is_some()), sibling(2)) {
             let base = DeviceStatus {
@@ -225,7 +230,9 @@ pub fn poll(ctx: &mut PollContext) {
                 ..Default::default()
             };
             let at = keyboard_level_at(pid);
-            found.push(status(base, ask(c, &keyboard_request(), |r| decode_keyboard(r, at))));
+            let a = ask(c, &keyboard_request(), |r| decode_keyboard(r, at));
+            crate::util::debug_log(|| format!("ROG OMNI receiver: keyboard {pid:04X} answered {a:?}"));
+            found.push(status(base, a));
         }
         crate::util::debug_log(|| {
             let ids: Vec<String> =
@@ -266,6 +273,10 @@ mod tests {
         assert_eq!(decode_pairs(&frame(&[0x02, 0xA0, 0, 0, 0, 0x94, 0x1A])), Vec::<u16>::new());
         assert_eq!(mouse_name(0x1A94), Some("ROG Harpe Ace Aim Lab Edition"));
         assert_eq!(keyboard_name(0x1A85), Some("ROG Azoth"));
+        // Recorded on the issue #428 receiver: Azoth X and Harpe Ace Aim Lab.
+        let r = frame(&[0x01, 0xA0, 0x00, 0x00, 0x00, 0x25, 0x1C, 0x00, 0x00, 0x94, 0x1A, 0x00, 0x00]);
+        assert_eq!(decode_pairs(&r), vec![0x1C25, 0x1A94]);
+        assert_eq!(keyboard_name(0x1C25), Some("ROG Azoth X"));
     }
 
     #[test]
