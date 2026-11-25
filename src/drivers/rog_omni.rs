@@ -15,8 +15,10 @@
 //!   mi_02&col03  report 03: the mouse (AsusMouse)
 //!       03 12 07     ->  03 12 07 .. .. [5] battery % .. .. .. .. [10] != 0 = charging
 //!
-//! A device that is off or asleep answers FF AA in bytes 1..2, or (mouse) a level of 0. Only these
-//! three reads are sent; nothing that changes a setting.
+//! A device that is off or asleep answers FF AA in bytes 1..2, or (mouse) a level of 0; the two
+//! cannot be told apart. Such a device is left out of the read, so the app keeps its last level
+//! (dimmed, "asleep") for its grace period and then drops it; one never seen is not listed. Only
+//! these three reads are sent; nothing that changes a setting.
 use crate::device::{DeviceKind, DeviceStatus, PollContext};
 use crate::hid::{HidColl, HidDev};
 use crate::util::Deadline;
@@ -185,11 +187,12 @@ fn instance(c: &HidColl) -> String {
     }
 }
 
-fn status(base: DeviceStatus, a: Option<Answer>) -> DeviceStatus {
+/// None for a device that is off or asleep: left out of the read (see the module comment).
+fn status(base: DeviceStatus, a: Option<Answer>) -> Option<DeviceStatus> {
     match a {
-        Some(Answer::Battery(level, charging)) => DeviceStatus { percent: level, charging, ..base },
-        Some(Answer::Asleep) => DeviceStatus { asleep: true, ..base },
-        None => DeviceStatus { connected: false, ..base },
+        Some(Answer::Battery(level, charging)) => Some(DeviceStatus { percent: level, charging, ..base }),
+        Some(Answer::Asleep) => None,
+        None => Some(DeviceStatus { connected: false, ..base }),
     }
 }
 
@@ -199,10 +202,12 @@ pub fn poll(ctx: &mut PollContext) {
     }
     let all = ctx.find(VID, PID, |c| c.iface == 2 && c.in_len() >= 8 && c.out_len() >= 8);
     let mut found = Vec::new();
+    let mut read_any = false;
     for pairs in all.iter().filter(|c| is_col(c, 1)) {
         let inst = instance(pairs);
         let sibling = |col: u8| all.iter().find(|c| is_col(c, col) && instance(c) == inst);
         let Some(pids) = read_pairs(pairs) else { continue };
+        read_any = true;
         if let (Some(&pid), Some(c)) = (pids.iter().find(|&&p| mouse_name(p).is_some()), sibling(3)) {
             let base = DeviceStatus {
                 key: format!("rog-omni:{pid:04x}"),
@@ -216,7 +221,7 @@ pub fn poll(ctx: &mut PollContext) {
             };
             let a = ask(c, &mouse_request(), decode_mouse);
             crate::util::debug_log(|| format!("ROG OMNI receiver: mouse {pid:04X} answered {a:?}"));
-            found.push(status(base, a));
+            found.extend(status(base, a));
         }
         if let (Some(&pid), Some(c)) = (pids.iter().find(|&&p| keyboard_name(p).is_some()), sibling(2)) {
             let base = DeviceStatus {
@@ -232,7 +237,7 @@ pub fn poll(ctx: &mut PollContext) {
             let at = keyboard_level_at(pid);
             let a = ask(c, &keyboard_request(), |r| decode_keyboard(r, at));
             crate::util::debug_log(|| format!("ROG OMNI receiver: keyboard {pid:04X} answered {a:?}"));
-            found.push(status(base, a));
+            found.extend(status(base, a));
         }
         crate::util::debug_log(|| {
             let ids: Vec<String> =
@@ -240,7 +245,8 @@ pub fn poll(ctx: &mut PollContext) {
             format!("ROG OMNI receiver: paired {}", ids.join(", "))
         });
     }
-    if found.is_empty() {
+    // Claimed even when every device sleeps, so no generic fallback lists the receiver itself.
+    if !read_any {
         return;
     }
     ctx.claim(VID, PID);
@@ -308,6 +314,15 @@ mod tests {
         assert_eq!(decode_mouse(&r), Some(Answer::Asleep));
         assert_eq!(decode_mouse(&frame(&[0x03, 0xFF, 0xAA])), Some(Answer::Asleep));
         assert_eq!(decode_mouse(&frame(&[0x03, 0x12, 0x06])), None);
+    }
+
+    #[test]
+    fn asleep_devices_are_left_out() {
+        let base = || DeviceStatus { key: "k".into(), ..Default::default() };
+        assert!(status(base(), Some(Answer::Asleep)).is_none());
+        let s = status(base(), Some(Answer::Battery(64, false))).unwrap();
+        assert_eq!((s.percent, s.charging, s.asleep), (64, false, false));
+        assert!(!status(base(), None).unwrap().connected); // no answer at all
     }
 
     #[test]
