@@ -242,7 +242,14 @@ fn headset_percent(pid: u16, mv: i32) -> i32 {
     match pid {
         0x0A66 => interpolate(mv, &[4200, 3850, 3790, 3750, 3680, 3330], &P6),
         0x0AC4 => interpolate(mv, &[4175, 3817, 3766, 3730, 3664, 3310], &P6),
-        0x0A5C | 0x0A89 | 0x0A5B | 0x0A87 | 0x0AFE => interpolate(mv, &[4100, 3950, 3850, 3750, 3650, 3500, 3300, 3150], &[100, 80, 60, 40, 20, 10, 5, 0]),
+        // G733 (0AFE revision): fitted to G HUB's readings on one headset, 3.81-3.83 V measured,
+        // the rest estimated (issue #429). G HUB is much higher than the G633 curve here.
+        0x0AFE => interpolate(
+            mv,
+            &[4100, 3950, 3870, 3840, 3828, 3820, 3813, 3790, 3760, 3730, 3700, 3670, 3600],
+            &[100, 97, 93, 89, 86, 83, 78, 66, 48, 30, 14, 5, 0],
+        ),
+        0x0A5C | 0x0A89 | 0x0A5B | 0x0A87 => interpolate(mv, &[4100, 3950, 3850, 3750, 3650, 3500, 3300, 3150], &[100, 80, 60, 40, 20, 10, 5, 0]),
         0x0AB5 => interpolate(
             mv,
             &[4175, 4127, 4086, 4054, 4001, 3968, 3944, 3914, 3875, 3840, 3818, 3800, 3783, 3771, 3759, 3744, 3725, 3695, 3675, 3630, 3341],
@@ -627,6 +634,18 @@ mod tests {
         assert_eq!(headset_percent(0x0AB5, 4200), 100); // G733
         assert_eq!(headset_percent(0x0AB5, 3300), 0);
         assert_eq!(headset_percent(0x0A66, 3850), 50); // G533
+        // G733 0AFE: G HUB's readings (issue #429) within 3 points.
+        for (mv, ghub) in [(3828, 86), (3827, 87), (3822, 84), (3821, 83), (3818, 82), (3816, 81), (3813, 78)] {
+            assert!((headset_percent(0x0AFE, mv) - ghub).abs() <= 3, "{mv} mV");
+        }
+        assert_eq!(headset_percent(0x0AFE, 4200), 100);
+        assert_eq!(headset_percent(0x0AFE, 3500), 0);
+        let mut last = 101;
+        for mv in (3500..4200).rev().step_by(5) {
+            let p = headset_percent(0x0AFE, mv);
+            assert!(p <= last, "0AFE curve must not rise as the voltage falls");
+            last = p;
+        }
     }
 
     #[test]
